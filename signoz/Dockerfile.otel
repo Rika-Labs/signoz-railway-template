@@ -1,4 +1,9 @@
 FROM signoz/signoz-otel-collector:latest
 
+# Default ClickHouse connection settings (override via Railway environment variables)
+ENV CLICKHOUSE_HOST=clickhouse.railway.internal
+ENV CLICKHOUSE_PORT=9000
+ENV LOW_CARDINAL_EXCEPTION_GROUPING=false
+
 COPY ./otel-collector-config.yaml /etc/otel-collector-config.yaml
 COPY signoz/otel-collector-opamp-config.yaml /etc/manager-config.yaml
