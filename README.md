@@ -1,58 +1,106 @@
-# Deploy and Host SigNoz on Railway
+# Deploy SigNoz on Railway
 
-**[SigNoz](https://signoz.io)** is an open-source observability platform that enables you to collect, store, and analyze distributed application **traces, metrics, and logs** using the OpenTelemetry standard.
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?template=https://github.com/Rika-Labs/signoz-railway-template)
 
-## About Hosting SigNoz
+**[SigNoz](https://signoz.io)** is an open-source observability platform for collecting, storing, and analyzing **traces, metrics, and logs** using OpenTelemetry.
 
-When you deploy SigNoz on Railway, the following core services are provisioned:
-- SigNoz
-- SigNoz Otel Collector
-- ClickHouse
-- Zookeeper
+## Quick Deploy
 
-The Railway template automatically sets up these services with the necessary environment variables, health checks, and persistent storage. This allows you to quickly go from deployment to creating dashboards. Simply point your application's OpenTelemetry SDK or agent to the provided ingest URL, and SigNoz will immediately begin visualizing service dependencies, latency, and errors.
+Click the button above to deploy SigNoz to Railway. The template will provision:
 
-## Common Use Cases
+- **SigNoz** - Main dashboard and query service
+- **SigNoz OTel Collector** - Receives telemetry data (OTLP)
+- **ClickHouse** - Time-series database for storage
+- **Zookeeper** - ClickHouse coordination
 
-- **Application Performance Monitoring**: Monitor metrics, logs, and traces across your entire Railway application stack.
-- **Debugging and Troubleshooting**: Correlate logs, metrics, and traces to quickly identify and resolve issues.
-- **Infrastructure Observability**: Monitor system health, resource usage, and service dependencies in real time.
-- **Alerting and Incident Response**: Set up alerts based on metrics and log patterns for proactive incident management.
+## Post-Deployment Setup
 
-## Dependencies for SigNoz Hosting
+### 1. Set ClickHouse Connection Variables
 
-- **Persistent Storage**: Use a Railway volume (or external block storage) for ClickHouse and SigNoz data.
-- **Ingest Traffic**: Applications should export OpenTelemetry traces, metrics, or logs over HTTP or gRPC.
+After deployment, configure these environment variables on the **signoz** and **signoz-otel-collector** services:
 
-### Deployment Dependencies
+| Variable | Value |
+|----------|-------|
+| `CLICKHOUSE_HOST` | `${{clickhouse.RAILWAY_PRIVATE_DOMAIN}}` |
+| `CLICKHOUSE_PORT` | `9000` |
+
+### 2. Run Schema Migrations
+
+The schema migrators run automatically. If services fail on first boot:
+
+1. Wait for `signoz-sync-schema-migrator` to complete
+2. Redeploy `signoz-async-schema-migrator`
+3. Redeploy `signoz`
+4. Redeploy `signoz-otel-collector`
+
+### 3. Configure Your Application
+
+Point your OpenTelemetry SDK to the collector:
+
+```bash
+# gRPC (port 4317)
+OTEL_EXPORTER_OTLP_ENDPOINT=http://signoz-otel-collector.railway.internal:4317
+
+# HTTP (port 4318)
+OTEL_EXPORTER_OTLP_ENDPOINT=http://signoz-otel-collector.railway.internal:4318
+```
+
+## Manual Deployment
+
+If the template button doesn't work, deploy manually:
+
+1. Create a new Railway project
+2. Add services from this repo:
+   - **clickhouse** - Use `clickhouse/clickhouse-server:24.1.2-alpine` image
+   - **zookeeper** - Use `bitnami/zookeeper:3.8` image
+   - **signoz** - Deploy from `signoz/` directory with `Dockerfile.signoz`
+   - **signoz-otel-collector** - Deploy from `signoz/` directory with `Dockerfile.otel`
+
+3. Add volumes:
+   - ClickHouse: `/var/lib/clickhouse/`
+   - SigNoz: `/var/lib/signoz/`
+
+4. Set environment variables as described above
+
+## Environment Variables Reference
+
+### SigNoz Service
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_DSN` | ClickHouse connection string | - |
+| `SIGNOZ_SQLSTORE_SQLITE_PATH` | SQLite database path | `/var/lib/signoz/signoz.db` |
+| `SIGNOZ_ALERTMANAGER_PROVIDER` | Alertmanager provider | `signoz` |
+
+### OTel Collector Service
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CLICKHOUSE_HOST` | ClickHouse hostname | `clickhouse.railway.internal` |
+| `CLICKHOUSE_PORT` | ClickHouse port | `9000` |
+| `LOW_CARDINAL_EXCEPTION_GROUPING` | Exception grouping setting | `false` |
+
+## Ingestion Endpoints
+
+| Protocol | Port | Endpoint |
+|----------|------|----------|
+| OTLP gRPC | 4317 | `signoz-otel-collector.railway.internal:4317` |
+| OTLP HTTP | 4318 | `signoz-otel-collector.railway.internal:4318/v1/traces` |
+
+## Fixes in This Fork
+
+This fork includes fixes for Railway deployment:
+
+1. **ClickHouse hostname** - Uses environment variables instead of hardcoded `clickhouse`
+2. **Start command** - Properly runs `./signoz server`
+3. **Default env vars** - OTel collector has sensible defaults for Railway networking
+
+## Resources
 
 - [SigNoz Documentation](https://signoz.io/docs/)
-- [OpenTelemetry Specification](https://opentelemetry.io/docs/)
-- [ClickHouse Server](https://clickhouse.com/docs/en/)
+- [OpenTelemetry Docs](https://opentelemetry.io/docs/)
+- [Railway Docs](https://docs.railway.com/)
 
-### Implementation Details
+## License
 
-To run the SigNoz stack on Railway, ensure the following:
-
-#### OpenTelemetry Ingestion
-- You may need to configure **Domains / Proxy** settings in Railway for the `signoz-otel-collector` service, depending on your use case.  
-- Port **4317** is open for ingestion by default.
-
-#### SigNoz UI
-- A public domain is configured automatically in Railway to access the SigNoz dashboard.
-
-#### Schema-Migration Order  
-ClickHouse migrations run in the dedicated **`signoz-schema-migrator`** job. As the Railway does not yet offer Docker-style `depends_on`, dependent services can occasionally start before migrations finish and fail on their first boot.  
-If that happens, **redeploy these services after the migrator job completes**, in the exact order shown:
-
-1. **signoz-async-schema-migrator**  
-2. **signoz** (main application)  
-3. **signoz-otel-collector**
-
-After redeploying in this sequence, all components will connect to ClickHouse with the correct schema and operate normally.
-
-## Why Deploy
-
-Railway is a singular platform to deploy your infrastructure stack. Railway will host your infrastructure so you don't have to deal with configuration, while allowing you to vertically and horizontally scale it.
-
-By deploying SigNoz on Railway, you are one step closer to supporting a complete full-stack application with minimal burden. Host your servers, databases, AI agents, and more on Railway.
+Apache 2.0 - See [SigNoz License](https://github.com/SigNoz/signoz/blob/main/LICENSE)
